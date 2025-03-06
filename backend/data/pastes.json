@@ -1,0 +1,24 @@
+[
+  {
+    "id": "417843e9-4884-4411-8122-5f13839199a5",
+    "content": "try {\n        setLoading(true);\n        \n        const pasteData = await ApiService.getPaste(pasteId);\n        setPaste(pasteData);\n      } catch (err) {\n        if (err.response && err.response.status === 404) {\n          setError('Paste not found. It may have expired or been removed.');\n        } else {\n          setError('Failed to load paste. Please try again later.');\n        }\n        console.error('Error fetching paste:', err);\n      } finally {\n        setLoading(false);\n      }",
+    "language": "javascript",
+    "title": "Untitled Paste",
+    "customUrl": null,
+    "isPrivate": true,
+    "createdAt": "2025-03-06T18:26:43.293Z",
+    "expiresAt": null,
+    "views": 0
+  },
+  {
+    "id": "0b1a33e7-8e7c-4ffc-96e5-6368f6dc8b7c",
+    "content": "try {\n        setLoading(true);\n        \n        const pasteData = await ApiService.getPaste(pasteId);\n        setPaste(pasteData);\n      } catch (err) {\n        if (err.response && err.response.status === 404) {\n          setError('Paste not found. It may have expired or been removed.');\n        } else {\n          setError('Failed to load paste. Please try again later.');\n        }\n        console.error('Error fetching paste:', err);\n      } finally {\n        setLoading(false);\n      }",
+    "language": "javascript",
+    "title": "js",
+    "customUrl": "js",
+    "isPrivate": true,
+    "createdAt": "2025-03-06T18:27:19.804Z",
+    "expiresAt": null,
+    "views": 0
+  }
+]
