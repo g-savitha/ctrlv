@@ -3,9 +3,7 @@ import axios from 'axios';
 // Configure the base URL for API requests
 // In production, this would point to your deployed backend
 // For local development, use your local server
-const API_URL = process.env.NODE_ENV === 'production' 
-  ? 'https://your-backend-api-url.com/api'
-  : 'http://localhost:3001/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
 // Create axios instance with default config
 const api = axios.create({
@@ -16,25 +14,29 @@ const api = axios.create({
 });
 
 // API functions
-export const ApiService = {
+const ApiService = {
   // Get paste by ID or custom URL
-  getPaste: async (id) => {
+  async getPaste(id) {
     try {
+      console.log('Fetching paste:', id); // Debug log
       const response = await api.get(`/pastes/${id}`);
+      console.log('Received paste:', response.data); // Debug log
       return response.data;
     } catch (error) {
-      console.error('Error fetching paste:', error);
+      console.error('API Error:', error.response?.data || error.message);
       throw error;
     }
   },
   
   // Create a new paste
-  createPaste: async (pasteData) => {
+  async createPaste(pasteData) {
     try {
+      console.log('Creating paste:', pasteData); // Debug log
       const response = await api.post('/pastes', pasteData);
+      console.log('Created paste:', response.data); // Debug log
       return response.data;
     } catch (error) {
-      console.error('Error creating paste:', error);
+      console.error('API Error:', error.response?.data || error.message);
       throw error;
     }
   },

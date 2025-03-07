@@ -59,46 +59,14 @@ function ViewPaste() {
       try {
         setLoading(true);
         
-        // For now, we'll simulate fetching paste data
-        // When we have the backend API, we'll replace this with an actual API call
-        await new Promise(resolve => setTimeout(resolve, 800));
-        
-        // Mock data for demonstration
-        setPaste({
-          id: pasteId,
-          title: pasteId === 'example' ? 'Example Paste' : `Paste ${pasteId}`,
-          content: pasteId === 'example' 
-            ? `// This is an example JavaScript code
-function factorial(n) {
-  if (n <= 1) return 1;
-  return n * factorial(n - 1);
-}
-
-// Calculate factorial of 5
-console.log(factorial(5)); // 120`
-            : `// This is a generated paste with ID: ${pasteId}
-console.log("Hello, world!");
-
-// Some sample code
-function greet(name) {
-  return \`Hello, \${name}!\`;
-}
-
-console.log(greet("User"));`,
-          language: 'javascript',
-          createdAt: new Date().toISOString(),
-          expiresAt: null,
-          views: Math.floor(Math.random() * 50) + 1
-        });
-        
-        /* 
-        // This is what the actual API call would look like:
-        const response = await axios.get(`YOUR_API_ENDPOINT/pastes/${pasteId}`);
-        setPaste(response.data);
-        */
-        
+        const pasteData = await ApiService.getPaste(pasteId);
+        setPaste(pasteData);
       } catch (err) {
-        setError('Failed to load paste. It may have expired or been removed.');
+        if (err.response && err.response.status === 404) {
+          setError('Paste not found. It may have expired or been removed.');
+        } else {
+          setError('Failed to load paste. Please try again later.');
+        }
         console.error('Error fetching paste:', err);
       } finally {
         setLoading(false);
@@ -179,10 +147,10 @@ console.log(greet("User"));`,
       
       <div className="relative">
         <div className="absolute top-0 right-0 bg-gray-800 text-white text-xs px-2 py-1 rounded-bl">
-          {paste.language}
+          {paste.syntaxLanguage}
         </div>
         <SyntaxHighlighter
-          language={paste.language || 'plaintext'}
+          language={paste.syntaxLanguage || 'plaintext'}
           style={atomOneDark}
           customStyle={{
             margin: 0,

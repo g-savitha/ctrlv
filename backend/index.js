@@ -1,8 +1,14 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs').promises;
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+require('dotenv').config();
+
+// Import database connection
+const connectDB = require('./config/db');
+// Import Paste model
+const Paste = require('./models/paste');
+// Import rate limiters
+const { createPasteLimiter, apiLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -10,58 +16,6 @@ const PORT = process.env.PORT || 3001;
 // Middleware
 app.use(cors());
 app.use(express.json());
-
-// Data storage path
-const DATA_DIR = path.join(__dirname, 'data');
-const PASTES_FILE = path.join(DATA_DIR, 'pastes.json');
-
-// Ensure data directory exists
-async function ensureDataDirExists() {
-  try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    try {
-      await fs.access(PASTES_FILE);
-    } catch {
-      // File doesn't exist, create it with an empty array
-      await fs.writeFile(PASTES_FILE, JSON.stringify([]));
-    }
-  } catch (err) {
-    console.error('Error setting up data directory:', err);
-    process.exit(1);
-  }
-}
-
-// Read pastes from file
-async function readPastes() {
-  try {
-    const data = await fs.readFile(PASTES_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (err) {
-    console.error('Error reading pastes:', err);
-    return [];
-  }
-}
-
-// Write pastes to file
-async function writePastes(pastes) {
-  try {
-    await fs.writeFile(PASTES_FILE, JSON.stringify(pastes, null, 2));
-  } catch (err) {
-    console.error('Error writing pastes:', err);
-  }
-}
-
-// Clean up expired pastes
-async function cleanupExpiredPastes() {
-  const pastes = await readPastes();
-  const now = new Date().toISOString();
-  const activePastes = pastes.filter(paste => !paste.expiresAt || paste.expiresAt > now);
-  
-  if (pastes.length !== activePastes.length) {
-    await writePastes(activePastes);
-    console.log(`Cleaned up ${pastes.length - activePastes.length} expired pastes`);
-  }
-}
 
 // Calculate expiration date based on expiration option
 function calculateExpirationDate(expiration) {
@@ -73,15 +27,15 @@ function calculateExpirationDate(expiration) {
   
   switch (expiration) {
     case '10m':
-      return new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+      return new Date(now.getTime() + 10 * 60 * 1000);
     case '1h':
-      return new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+      return new Date(now.getTime() + 60 * 60 * 1000);
     case '1d':
-      return new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+      return new Date(now.getTime() + 24 * 60 * 60 * 1000);
     case '1w':
-      return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     case '1month':
-      return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     default:
       return null;
   }
@@ -89,11 +43,13 @@ function calculateExpirationDate(expiration) {
 
 // API Routes
 
+// Apply general rate limiter to all API routes
+app.use('/api', apiLimiter);
+
 // Get all pastes (admin endpoint, would require authentication in production)
 app.get('/api/pastes', async (req, res) => {
   try {
-    await cleanupExpiredPastes();
-    const pastes = await readPastes();
+    const pastes = await Paste.find().select('-__v');
     res.json(pastes);
   } catch (err) {
     console.error('Error fetching pastes:', err);
@@ -101,20 +57,36 @@ app.get('/api/pastes', async (req, res) => {
   }
 });
 
+// Get recent public pastes
+app.get('/api/pastes/recent', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    
+    const recentPastes = await Paste.find({ isPrivate: false })
+      .select('id title syntaxLanguage customUrl createdAt views')
+      .sort({ createdAt: -1 })
+      .limit(limit);
+    
+    res.json(recentPastes);
+  } catch (err) {
+    console.error('Error fetching recent pastes:', err);
+    res.status(500).json({ error: 'Failed to fetch recent pastes' });
+  }
+});
+
 // Get paste by ID or custom URL
 app.get('/api/pastes/:id', async (req, res) => {
   try {
-    await cleanupExpiredPastes();
-    const pastes = await readPastes();
-    const paste = pastes.find(p => p.id === req.params.id || p.customUrl === req.params.id);
+    // Find by id or customUrl
+    const paste = await Paste.findOneAndUpdate(
+      { $or: [{ id: req.params.id }, { customUrl: req.params.id }] },
+      { $inc: { views: 1 } }, // Increment view count
+      { new: true } // Return updated document
+    ).select('-__v');
     
     if (!paste) {
       return res.status(404).json({ error: 'Paste not found' });
     }
-    
-    // Increment view count
-    paste.views = (paste.views || 0) + 1;
-    await writePastes(pastes);
     
     res.json(paste);
   } catch (err) {
@@ -124,7 +96,7 @@ app.get('/api/pastes/:id', async (req, res) => {
 });
 
 // Create a new paste
-app.post('/api/pastes', async (req, res) => {
+app.post('/api/pastes', createPasteLimiter, async (req, res) => {
   try {
     const { content, language, title, customUrl, expiration, isPrivate } = req.body;
     
@@ -132,35 +104,32 @@ app.post('/api/pastes', async (req, res) => {
       return res.status(400).json({ error: 'Paste content is required' });
     }
     
-    const pastes = await readPastes();
-    
     // Check if custom URL is already taken
-    if (customUrl && pastes.some(p => p.customUrl === customUrl)) {
-      return res.status(409).json({ error: 'Custom URL is already taken' });
+    if (customUrl) {
+      const existingPaste = await Paste.findOne({ customUrl });
+      if (existingPaste) {
+        return res.status(409).json({ error: 'Custom URL is already taken' });
+      }
     }
     
     const id = uuidv4();
-    const now = new Date().toISOString();
     const expiresAt = calculateExpirationDate(expiration);
     
-    const newPaste = {
+    const newPaste = new Paste({
       id,
       content,
-      language: language || 'plaintext',
+      syntaxLanguage: language || 'plaintext',
       title: title || 'Untitled Paste',
       customUrl: customUrl || null,
       isPrivate: Boolean(isPrivate),
-      createdAt: now,
-      expiresAt,
-      views: 0
-    };
+      expiresAt
+    });
     
-    pastes.push(newPaste);
-    await writePastes(pastes);
+    await newPaste.save();
     
     res.status(201).json({
       pasteId: customUrl || id,
-      ...newPaste
+      ...newPaste.toObject()
     });
   } catch (err) {
     console.error('Error creating paste:', err);
@@ -168,17 +137,53 @@ app.post('/api/pastes', async (req, res) => {
   }
 });
 
+// Search pastes
+app.get('/api/search', async (req, res) => {
+  try {
+    const { query, language } = req.query;
+    
+    if (!query) {
+      return res.status(400).json({ error: 'Search query is required' });
+    }
+    
+    // Build search criteria
+    const searchCriteria = {
+      // Only search public pastes
+      isPrivate: false,
+      // Search in title and content
+      $or: [
+        { title: { $regex: query, $options: 'i' } },
+        { content: { $regex: query, $options: 'i' } }
+      ]
+    };
+    
+    // Add language filter if provided
+    if (language) {
+      searchCriteria.syntaxLanguage = language;
+    }
+    
+    // Find matching pastes
+    const pastes = await Paste.find(searchCriteria)
+      .select('id title syntaxLanguage customUrl createdAt views')
+      .sort({ createdAt: -1 })
+      .limit(20);
+    
+    res.json(pastes);
+  } catch (err) {
+    console.error('Error searching pastes:', err);
+    res.status(500).json({ error: 'Failed to search pastes' });
+  }
+});
+
 // Delete a paste
 app.delete('/api/pastes/:id', async (req, res) => {
   try {
-    const pastes = await readPastes();
-    const filteredPastes = pastes.filter(p => p.id !== req.params.id);
+    const result = await Paste.findOneAndDelete({ id: req.params.id });
     
-    if (pastes.length === filteredPastes.length) {
+    if (!result) {
       return res.status(404).json({ error: 'Paste not found' });
     }
     
-    await writePastes(filteredPastes);
     res.status(204).send();
   } catch (err) {
     console.error('Error deleting paste:', err);
@@ -188,14 +193,12 @@ app.delete('/api/pastes/:id', async (req, res) => {
 
 // Initialize and start server
 async function start() {
-  await ensureDataDirExists();
+  // Connect to MongoDB
+  await connectDB();
   
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
-  
-  // Run cleanup every hour
-  setInterval(cleanupExpiredPastes, 60 * 60 * 1000);
 }
 
 start();
